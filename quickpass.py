@@ -7,7 +7,7 @@ import subprocess
 import tkinter
 import tkinter.font as tkFont
 
-import gnupg
+import gpg as qpgpg
 
 
 def clipboard_copy(text):
@@ -19,7 +19,7 @@ def clipboard_copy(text):
         input=bytes(text, encoding="utf-8")
         )
     if result.returncode == 0:
-        print("Copied:", text)
+        pass
     else:
         print("Error copying")
 
@@ -122,7 +122,7 @@ def format_dir_list_recurse(curdir, search=""):
 
 
 class PassGUI(tkinter.Tk):
-    """ Get a string from the user """
+    """Main QuickPass GUI"""
     def __init__(self, parent=None):
         tkinter.Tk.__init__(self, parent)
         self.parent = parent
@@ -140,7 +140,7 @@ class PassGUI(tkinter.Tk):
         # keep this window on top
         #self.wm_attributes('-topmost', 1)
         # make the window maximized
-        win_width = self.winfo_screenwidth() // 4
+        win_width = self.winfo_screenwidth() // 2
         win_height = self.winfo_screenheight() // 2
         # center the window on the screen
         self.eval('tk::PlaceWindow %s center' % self.winfo_pathname(self.winfo_id()))
@@ -155,13 +155,24 @@ class PassGUI(tkinter.Tk):
         self.bind("<Escape>", self.on_press_escape)
         self.title("QuickPass")
 
-        # Name entry box
-        self.entry_var = tkinter.StringVar()
-        self.entry = tkinter.Entry(self, textvariable=self.entry_var, font=self.custom_font)
-        self.entry.grid(row=1, column=0, sticky="EW")
-        self.entry.bind("<KeyRelease>", self.on_key_press)
-        self.entry.bind("<Return>", self.on_press_enter)
-        self.entry_var.set("")
+        # Pass directory chooser
+        self.passdir_chooser = tkinter.Frame(self)
+        self.passdir_chooser.grid()
+        self.passdir_chooser.grid(row=0, column=0, columnspan=1, sticky="NEW")
+        repos = os.listdir(self.homedir + ".quickpass/repos/")
+        # quick access buttons
+        for col in range(9):
+            try:
+                tkinter.Button(
+                    self.passdir_chooser,
+                    text=repos[col],
+                    font=self.custom_font
+                    ).grid(row=0, column=col, sticky="EW")
+            except IndexError:
+                # ignore buttons for which there is no directory
+                pass
+            self.passdir_chooser.grid_columnconfigure(col, weight=1)
+        # TODO: add the rest of the directories (if there are more than 9) to a menu at the end
 
         # Name label
         self.label_var = tkinter.StringVar()
@@ -173,15 +184,23 @@ class PassGUI(tkinter.Tk):
             bg="gray",
             font=self.custom_font
         )
-        self.label.grid(row=0, column=0, columnspan=1, sticky="EW")
+        self.label.grid(row=1, column=0, columnspan=1, sticky="EW")
         self.label_var.set("Search items")
+
+        # Name entry box
+        self.entry_var = tkinter.StringVar()
+        self.entry = tkinter.Entry(self, textvariable=self.entry_var, font=self.custom_font)
+        self.entry.grid(row=2, column=0, sticky="EW")
+        self.entry.bind("<KeyRelease>", self.on_key_press)
+        self.entry.bind("<Return>", self.on_press_enter)
+        self.entry_var.set("")
 
         # List of items
         self.list = tkinter.Listbox(self, font=self.custom_font, exportselection=False)
-        self.list.grid(row=2, column=0, sticky="NESW")
+        self.list.grid(row=3, column=0, sticky="NESW")
         self.list.bind("<Double-1>", self.on_double_click)
 
-        self.grid_rowconfigure(2, weight=1)
+        self.grid_rowconfigure(3, weight=1)
         self.grid_columnconfigure(0, weight=1)
         #self.resizable(True, False)
         self.entry.focus_set()
@@ -222,13 +241,12 @@ class PassGUI(tkinter.Tk):
     def on_press_enter(self, event):
         """ copy the selected password when enter is pressed """
         del event
-        print("enter")
         index = self.list.curselection()
         item = self.curlistitems[index[0]]
         self.set_label("Waiting for decryption...", "yellow")
         try:
             password = self.get_pass(item)
-        except self.DecryptionFailedException as error:
+        except qpgpg.GPG.DecryptionException as error:
             self.unset_label()
             self.flash_label(error.message, "red", 2000)
         else:
@@ -248,12 +266,10 @@ class PassGUI(tkinter.Tk):
         self.label_var.set(message)
         self.label.configure(bg=color)
         self.update()
-        print("set color")
 
     def unset_label(self):
         """Set the label to its previous value"""
         self.set_label(self.label.prev_str, self.label.prev_color)
-        print("unset color")
 
     def on_press_escape(self, event):
         """Close out the program."""
@@ -264,25 +280,20 @@ class PassGUI(tkinter.Tk):
         """ get the contents of an encrypted file by name """
         return self.decrypt(item.fullpath)
 
-    class DecryptionFailedException(Exception):
-        """Decryption Failed"""
-        def __init__(self, message):
-            super().__init__()
-            self.message = message
-
     def decrypt(self, path):
         """ decrypt the file at path """
         with open(path, "rb") as fileh:
-            gpg = gnupg.GPG(gnupghome=self.homedir+".gnupg")
-            decrypted = gpg.decrypt_file(fileh)
-            if decrypted.ok:
-                return str(decrypted)
+            gpg = qpgpg.GPG()
+            try:
+                decrypted = gpg.decrypt_file(fileh)
+            except qpgpg.GPG.DecryptionException:
+                raise
             else:
-                raise self.DecryptionFailedException(decrypted.status)
+                return decrypted
 
     def get_pass(self, item):
         """ get the password by name """
-        text = self.get_contents(item)
+        text = str(self.get_contents(item), encoding="utf-8")
         lines = text.split("\n")
         password = lines[0]
         return password
@@ -291,7 +302,3 @@ class PassGUI(tkinter.Tk):
 
 if __name__ == "__main__":
     PassGUI()
-    #x = get_dir_list("/home/kschmittle/.password-store-personal/")
-    #f = format_dir_list(x, search="")
-    #for item in f:
-    #    print(item)
